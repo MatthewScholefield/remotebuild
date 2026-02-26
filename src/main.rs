@@ -257,9 +257,7 @@ fn run_remote_build(project_dir: &Path, config: &Config, force_full_sync: bool) 
 
     match output {
         OutputLevel::Minimal => {
-            print!("🚀 Remote Build: {} ", config.host);
-            use std::io::Write;
-            std::io::stdout().flush().ok();
+            // No initial message for minimal mode
         }
         OutputLevel::Normal | OutputLevel::Verbose => {
             println!("🚀 Remote Build Proxy");
@@ -280,7 +278,7 @@ fn run_remote_build(project_dir: &Path, config: &Config, force_full_sync: bool) 
 
     match output {
         OutputLevel::Minimal => {
-            println!("\r✅ Build complete!");
+            // No final message for minimal mode - spinner cleanup is enough
         }
         OutputLevel::Normal | OutputLevel::Verbose => {
             println!();
