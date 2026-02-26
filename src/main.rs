@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::env;
+use std::fmt;
 
 /// Remote build configuration file
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,6 +44,71 @@ fn default_remote_path() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+/// Get the SSH control socket path for connection sharing
+fn ssh_control_path(host: &str) -> String {
+    // Use XDG cache directory or fallback to temp
+    let cache_dir = dirs::cache_dir().unwrap_or_else(|| env::temp_dir());
+    let control_dir = cache_dir.join("remotebuild");
+    let _ = fs::create_dir_all(&control_dir);
+
+    // Sanitize hostname for use in filename
+    let safe_host = host.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '.', "_");
+    control_dir.join(format!("control_{}", safe_host)).to_string_lossy().to_string()
+}
+
+/// Ensure SSH control master connection is established
+fn ensure_ssh_connection(config: &Config) -> Result<()> {
+    let control_path = ssh_control_path(&config.host);
+
+    // Check if control socket already exists and is valid
+    if Path::new(&control_path).exists() {
+        // Test connection with a simple command
+        let test_result = Command::new("ssh")
+            .arg("-o")
+            .arg("ControlMaster=no")
+            .arg("-o")
+            .arg(format!("ControlPath={}", control_path))
+            .arg("-o")
+            .arg("ConnectTimeout=2")
+            .arg(&config.host)
+            .arg("true")
+            .output();
+
+        if let Ok(output) = test_result {
+            if output.status.success() {
+                // Connection is still alive
+                return Ok(());
+            }
+        }
+    }
+
+    // Start new control master connection in background
+    Command::new("ssh")
+        .arg("-N")
+        .arg("-M")
+        .arg("-o")
+        .arg("ControlMaster=auto")
+        .arg("-o")
+        .arg("ControlPersist=10m")
+        .arg("-o")
+        .arg(format!("ControlPath={}", control_path))
+        .arg(&config.host)
+        .spawn()
+        .context("Failed to start SSH control master")?;
+
+    // Give it a moment to establish
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    Ok(())
+}
+
+/// Helper to add SSH control options to a command
+fn add_ssh_control_args(cmd: &mut Command, config: &Config) {
+    let control_path = ssh_control_path(&config.host);
+    cmd.arg("-o")
+        .arg(format!("ControlPath={}", control_path));
 }
 
 /// Command line arguments
@@ -126,6 +192,9 @@ fn run_remote_build(project_dir: &Path, config: &Config, verbose: bool, force_fu
 fn sync_to_remote(project_dir: &Path, config: &Config, verbose: bool, force_full_sync: bool) -> Result<()> {
     println!("📦 Syncing files to remote...");
 
+    // Ensure SSH connection is established for reuse
+    ensure_ssh_connection(config)?;
+
     // Use remote_path as-is (it should be the full destination path)
     let remote_full_path = &config.remote_path;
 
@@ -145,6 +214,11 @@ fn sync_to_remote(project_dir: &Path, config: &Config, verbose: bool, force_full
 
     // Add delete flag to keep remote in sync
     rsync_cmd.arg("--delete");
+
+    // Add SSH control path for connection reuse
+    let control_path = ssh_control_path(&config.host);
+    rsync_cmd.arg("-e")
+        .arg(format!("ssh -o ControlPath={}", control_path));
 
     // Add exclusions
     rsync_cmd.arg("--exclude=.git");
@@ -244,14 +318,20 @@ fn run_remote_build_command(config: &Config, verbose: bool) -> Result<()> {
     // Don't escape the cd path, just the build command if needed
     let cmd = format!("cd {} && {}", config.remote_path, config.build_command);
 
-    // Run SSH command with output streaming
+    // Run SSH command with output streaming and control path
+    let control_path = ssh_control_path(&config.host);
+
     let status = if verbose {
         Command::new("ssh")
+            .arg("-o")
+            .arg(format!("ControlPath={}", control_path))
             .arg(&config.host)
             .arg(&cmd)
             .status()?
     } else {
         Command::new("ssh")
+            .arg("-o")
+            .arg(format!("ControlPath={}", control_path))
             .arg(&config.host)
             .arg(&cmd)
             .stdout(std::process::Stdio::inherit())
@@ -273,6 +353,8 @@ fn run_remote_build_command(config: &Config, verbose: bool) -> Result<()> {
 fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
     println!("📥 Copying artifacts back...");
 
+    let control_path = ssh_control_path(&config.host);
+
     for artifact in &config.artifacts {
         let mut rsync_cmd = Command::new("rsync");
         rsync_cmd.arg("-avz");
@@ -282,6 +364,10 @@ fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
         } else {
             rsync_cmd.arg("--quiet");
         }
+
+        // Use SSH control path for connection reuse
+        rsync_cmd.arg("-e")
+            .arg(format!("ssh -o ControlPath={}", control_path));
 
         // Copy from remote to current directory
         rsync_cmd.arg(format!("{}:{}/{}", config.host, config.remote_path, artifact));
@@ -307,7 +393,11 @@ fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
 }
 
 fn run_ssh_command(config: &Config, cmd: &str, _verbose: bool) -> Result<()> {
+    let control_path = ssh_control_path(&config.host);
+
     let output = Command::new("ssh")
+        .arg("-o")
+        .arg(format!("ControlPath={}", control_path))
         .arg(&config.host)
         .arg(cmd)
         .output()
