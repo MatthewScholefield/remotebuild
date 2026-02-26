@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::env;
 use std::fmt;
-use indicatif::{ProgressBar, ProgressStyle};
+use std::thread;
+use std::time::Duration;
 
 /// Remote build configuration file
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,9 +52,59 @@ impl Config {
 
 #[derive(Clone, Copy)]
 enum OutputLevel {
-    Minimal,  // Single \r-overwriting lines
+    Minimal,  // Single \r-overwriting lines with spinner
     Normal,   // Multi-line status with clear start/end
     Verbose,  // All details
+}
+
+/// Simple spinner for minimal mode
+struct Spinner {
+    message: String,
+    frames: &'static [&'static str],
+    current_frame: usize,
+    stopped: bool,
+}
+
+impl Spinner {
+    fn new(message: &str) -> Self {
+        Self {
+            message: message.to_string(),
+            frames: &["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"],
+            current_frame: 0,
+            stopped: false,
+        }
+    }
+
+    fn tick(&mut self) {
+        if self.stopped {
+            return;
+        }
+
+        let frame = self.frames[self.current_frame % self.frames.len()];
+        print!("\r{} {}", self.message, frame);
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+
+        self.current_frame += 1;
+    }
+
+    fn stop(&mut self) {
+        if self.stopped {
+            return;
+        }
+        self.stopped = true;
+
+        // Clear the line
+        print!("\r{: <width$}\r", ' ', width = self.message.len() + 3);
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 fn default_remote_path() -> String {
@@ -241,18 +292,12 @@ fn run_remote_build(project_dir: &Path, config: &Config, force_full_sync: bool) 
 }
 
 /// Print a status message that can be overwritten
-fn print_status(level: OutputLevel, message: &str) -> Option<ProgressBar> {
+fn print_status(level: OutputLevel, message: &str) -> Option<Spinner> {
     match level {
         OutputLevel::Minimal => {
-            let pb = ProgressBar::new_spinner();
-            pb.set_style(
-                ProgressStyle::default_spinner()
-                    .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈", "⠄", "⢂", "⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
-                    .template("{spinner} {msg}")
-                    .unwrap()
-            );
-            pb.set_message(message.to_string());
-            Some(pb)
+            let mut spinner = Spinner::new(message);
+            spinner.tick(); // Show first frame immediately
+            Some(spinner)
         }
         OutputLevel::Normal => {
             println!("{}", message);
@@ -265,17 +310,25 @@ fn print_status(level: OutputLevel, message: &str) -> Option<ProgressBar> {
     }
 }
 
-/// Clear the current status (finish the spinner)
-fn clear_status(_level: OutputLevel, pb: &Option<ProgressBar>) {
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
+/// Clear the current status (stop the spinner)
+fn clear_status(_level: OutputLevel, spinner: &mut Option<Spinner>) {
+    if let Some(spinner) = spinner {
+        spinner.stop();
+    }
+}
+
+/// Tick the spinner to show next frame
+fn tick_spinner(spinner: &mut Option<Spinner>) {
+    if let Some(spinner) = spinner {
+        spinner.tick();
+        thread::sleep(Duration::from_millis(150));
     }
 }
 
 fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) -> Result<()> {
     let output = config.output_level();
 
-    let pb = print_status(output, "📦 Syncing files...");
+    let mut spinner = print_status(output, "📦 Syncing files...");
 
     // Ensure SSH connection is established for reuse
     ensure_ssh_connection(config)?;
@@ -354,11 +407,11 @@ fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) ->
     }
 
     if !status.success() {
-        clear_status(output, &pb);
+        clear_status(output, &mut spinner);
         return Err(anyhow!("rsync failed with exit code: {:?}", status));
     }
 
-    clear_status(output, &pb);
+    clear_status(output, &mut spinner);
 
     if matches!(output, OutputLevel::Normal) {
         println!("   ✓ Sync complete");
@@ -403,13 +456,13 @@ fn get_git_files(project_dir: &Path) -> Result<Vec<String>> {
 fn run_remote_build_command(config: &Config) -> Result<()> {
     let output = config.output_level();
 
-    let pb = print_status(output, "🔨 Building...");
+    let mut spinner = print_status(output, "🔨 Building...");
 
     // Don't escape the cd path, just the build command if needed
     let cmd = format!("cd {} && {}", config.remote_path, config.build_command);
 
     // Clear spinner before build output
-    clear_status(output, &pb);
+    clear_status(output, &mut spinner);
 
     // Run SSH command with output streaming
     let status = if matches!(output, OutputLevel::Verbose) {
@@ -438,7 +491,7 @@ fn run_remote_build_command(config: &Config) -> Result<()> {
 fn sync_artifacts(config: &Config) -> Result<()> {
     let output = config.output_level();
 
-    let pb = print_status(output, "📥 Copying artifacts...");
+    let mut spinner = print_status(output, "📥 Copying artifacts...");
 
     for artifact in &config.artifacts {
         let mut rsync_cmd = Command::new("rsync");
@@ -470,7 +523,7 @@ fn sync_artifacts(config: &Config) -> Result<()> {
         }
     }
 
-    clear_status(output, &pb);
+    clear_status(output, &mut spinner);
 
     if matches!(output, OutputLevel::Normal) {
         println!("   ✓ Artifacts downloaded");
