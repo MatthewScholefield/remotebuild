@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::env;
 use std::fmt;
+use indicatif::{ProgressBar, ProgressStyle};
 
 /// Remote build configuration file
 #[derive(Debug, Serialize, Deserialize)]
@@ -239,36 +240,42 @@ fn run_remote_build(project_dir: &Path, config: &Config, force_full_sync: bool) 
     Ok(())
 }
 
-/// Print a status message that can be overwritten with \r
-fn print_status(level: OutputLevel, message: &str) {
+/// Print a status message that can be overwritten
+fn print_status(level: OutputLevel, message: &str) -> Option<ProgressBar> {
     match level {
         OutputLevel::Minimal => {
-            print!("\r{} ", message);
-            use std::io::Write;
-            std::io::stdout().flush().ok();
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈", "⠄", "⢂", "⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
+                    .template("{spinner} {msg}")
+                    .unwrap()
+            );
+            pb.set_message(message.to_string());
+            Some(pb)
         }
         OutputLevel::Normal => {
             println!("{}", message);
+            None
         }
         OutputLevel::Verbose => {
             println!("{}", message);
+            None
         }
     }
 }
 
-/// Clear the current status line (for minimal mode)
-fn clear_status(level: OutputLevel) {
-    if matches!(level, OutputLevel::Minimal) {
-        print!("\r{: <80}\r", ' ');
-        use std::io::Write;
-        std::io::stdout().flush().ok();
+/// Clear the current status (finish the spinner)
+fn clear_status(_level: OutputLevel, pb: &Option<ProgressBar>) {
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
     }
 }
 
 fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) -> Result<()> {
     let output = config.output_level();
 
-    print_status(output, "📦 Syncing files...");
+    let pb = print_status(output, "📦 Syncing files...");
 
     // Ensure SSH connection is established for reuse
     ensure_ssh_connection(config)?;
@@ -347,10 +354,12 @@ fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) ->
     }
 
     if !status.success() {
+        clear_status(output, &pb);
         return Err(anyhow!("rsync failed with exit code: {:?}", status));
     }
 
-    // In minimal mode, the status line stays, no additional output needed
+    clear_status(output, &pb);
+
     if matches!(output, OutputLevel::Normal) {
         println!("   ✓ Sync complete");
         println!();
@@ -394,18 +403,18 @@ fn get_git_files(project_dir: &Path) -> Result<Vec<String>> {
 fn run_remote_build_command(config: &Config) -> Result<()> {
     let output = config.output_level();
 
-    clear_status(output);
-    print_status(output, "🔨 Building...");
+    let pb = print_status(output, "🔨 Building...");
 
     // Don't escape the cd path, just the build command if needed
     let cmd = format!("cd {} && {}", config.remote_path, config.build_command);
+
+    // Clear spinner before build output
+    clear_status(output, &pb);
 
     // Run SSH command with output streaming
     let status = if matches!(output, OutputLevel::Verbose) {
         ssh_command(config).arg(&cmd).status()?
     } else {
-        // Clear the status line before showing build output
-        clear_status(output);
         ssh_command(config)
             .arg(&cmd)
             .stdout(std::process::Stdio::inherit())
@@ -429,7 +438,7 @@ fn run_remote_build_command(config: &Config) -> Result<()> {
 fn sync_artifacts(config: &Config) -> Result<()> {
     let output = config.output_level();
 
-    print_status(output, "📥 Copying artifacts...");
+    let pb = print_status(output, "📥 Copying artifacts...");
 
     for artifact in &config.artifacts {
         let mut rsync_cmd = Command::new("rsync");
@@ -460,6 +469,8 @@ fn sync_artifacts(config: &Config) -> Result<()> {
             }
         }
     }
+
+    clear_status(output, &pb);
 
     if matches!(output, OutputLevel::Normal) {
         println!("   ✓ Artifacts downloaded");
