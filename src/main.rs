@@ -111,6 +111,14 @@ fn add_ssh_control_args(cmd: &mut Command, config: &Config) {
         .arg(format!("ControlPath={}", control_path));
 }
 
+/// Create a Command with SSH control path pre-configured
+fn ssh_command(config: &Config) -> Command {
+    let mut cmd = Command::new("ssh");
+    add_ssh_control_args(&mut cmd, config);
+    cmd.arg(&config.host);
+    cmd
+}
+
 /// Command line arguments
 #[derive(Parser, Debug)]
 #[command(name = "remotebuild")]
@@ -318,21 +326,11 @@ fn run_remote_build_command(config: &Config, verbose: bool) -> Result<()> {
     // Don't escape the cd path, just the build command if needed
     let cmd = format!("cd {} && {}", config.remote_path, config.build_command);
 
-    // Run SSH command with output streaming and control path
-    let control_path = ssh_control_path(&config.host);
-
+    // Run SSH command with output streaming
     let status = if verbose {
-        Command::new("ssh")
-            .arg("-o")
-            .arg(format!("ControlPath={}", control_path))
-            .arg(&config.host)
-            .arg(&cmd)
-            .status()?
+        ssh_command(config).arg(&cmd).status()?
     } else {
-        Command::new("ssh")
-            .arg("-o")
-            .arg(format!("ControlPath={}", control_path))
-            .arg(&config.host)
+        ssh_command(config)
             .arg(&cmd)
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
@@ -393,12 +391,7 @@ fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
 }
 
 fn run_ssh_command(config: &Config, cmd: &str, _verbose: bool) -> Result<()> {
-    let control_path = ssh_control_path(&config.host);
-
-    let output = Command::new("ssh")
-        .arg("-o")
-        .arg(format!("ControlPath={}", control_path))
-        .arg(&config.host)
+    let output = ssh_command(config)
         .arg(cmd)
         .output()
         .context("Failed to run SSH command")?;
