@@ -119,6 +119,11 @@ fn ssh_command(config: &Config) -> Command {
     cmd
 }
 
+/// Get the SSH control path as a string (for rsync -e flag)
+fn ssh_control_path_arg(config: &Config) -> String {
+    format!("ssh -o ControlPath={}", ssh_control_path(&config.host))
+}
+
 /// Command line arguments
 #[derive(Parser, Debug)]
 #[command(name = "remotebuild")]
@@ -224,9 +229,8 @@ fn sync_to_remote(project_dir: &Path, config: &Config, verbose: bool, force_full
     rsync_cmd.arg("--delete");
 
     // Add SSH control path for connection reuse
-    let control_path = ssh_control_path(&config.host);
     rsync_cmd.arg("-e")
-        .arg(format!("ssh -o ControlPath={}", control_path));
+        .arg(ssh_control_path_arg(config));
 
     // Add exclusions
     rsync_cmd.arg("--exclude=.git");
@@ -351,8 +355,6 @@ fn run_remote_build_command(config: &Config, verbose: bool) -> Result<()> {
 fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
     println!("📥 Copying artifacts back...");
 
-    let control_path = ssh_control_path(&config.host);
-
     for artifact in &config.artifacts {
         let mut rsync_cmd = Command::new("rsync");
         rsync_cmd.arg("-avz");
@@ -365,7 +367,7 @@ fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
 
         // Use SSH control path for connection reuse
         rsync_cmd.arg("-e")
-            .arg(format!("ssh -o ControlPath={}", control_path));
+            .arg(ssh_control_path_arg(config));
 
         // Copy from remote to current directory
         rsync_cmd.arg(format!("{}:{}/{}", config.host, config.remote_path, artifact));
