@@ -69,8 +69,11 @@ exclude_patterns:
 # Optional: Enable git-aware file syncing (default: true)
 git_aware: true
 
-# Optional: Verbose output (default: false)
-verbose: false
+# Optional: Output level - minimal, normal, or verbose (default: minimal)
+# - minimal: Single-line status indicators (cleanest output)
+# - normal: Multi-line status with completion messages
+# - verbose: Detailed file transfer logs
+output: minimal
 ```
 
 ## Usage
@@ -78,11 +81,14 @@ verbose: false
 From your project directory:
 
 ```bash
-# Basic usage
+# Basic usage (minimal output)
 remotebuild
 
-# Verbose output
-remotebuild -v
+# Normal output mode
+remotebuild -o normal
+
+# Verbose output (shows file transfer details)
+remotebuild -o verbose
 
 # Force full sync (ignore git change detection)
 remotebuild --force-full-sync
