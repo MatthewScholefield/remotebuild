@@ -81,7 +81,8 @@ impl Spinner {
         }
 
         let frame = self.frames[self.current_frame % self.frames.len()];
-        print!("\r{} {}", self.message, frame);
+        // Bold the entire line including spinner
+        print!("\r\x1b[1m{}{}\x1b[0m", self.message, frame);
         use std::io::Write;
         std::io::stdout().flush().ok();
 
@@ -95,7 +96,8 @@ impl Spinner {
         self.stopped = true;
 
         // Clear the line
-        print!("\r{: <width$}\r", ' ', width = self.message.len() + 3);
+        let line_width = self.message.len() + 2; // message + spinner frame
+        print!("\r{: <width$}\r", ' ', width = line_width);
         use std::io::Write;
         std::io::stdout().flush().ok();
     }
@@ -326,7 +328,7 @@ fn tick_spinner(spinner: &mut Option<Spinner>) {
 fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) -> Result<()> {
     let output = config.output_level();
 
-    let mut spinner = print_status(output, "📦 Syncing files...");
+    let mut spinner = print_status(output, "📦 Syncing files ");
 
     // Ensure SSH connection is established for reuse
     ensure_ssh_connection(config)?;
@@ -454,7 +456,7 @@ fn get_git_files(project_dir: &Path) -> Result<Vec<String>> {
 fn run_remote_build_command(config: &Config) -> Result<()> {
     let output = config.output_level();
 
-    let mut spinner = print_status(output, "🔨 Building...");
+    let mut spinner = print_status(output, "🔨 Building ");
 
     // Don't escape the cd path, just the build command if needed
     let cmd = format!("cd {} && {}", config.remote_path, config.build_command);
@@ -489,7 +491,7 @@ fn run_remote_build_command(config: &Config) -> Result<()> {
 fn sync_artifacts(config: &Config) -> Result<()> {
     let output = config.output_level();
 
-    let mut spinner = print_status(output, "📥 Copying artifacts...");
+    let mut spinner = print_status(output, "📥 Copying artifacts ");
 
     for artifact in &config.artifacts {
         let mut rsync_cmd = Command::new("rsync");
