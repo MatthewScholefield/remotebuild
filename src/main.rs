@@ -33,9 +33,26 @@ struct Config {
     #[serde(default = "default_true")]
     git_aware: bool,
 
-    /// Verbose output
+    /// Output level: minimal, normal, or verbose (default: minimal)
     #[serde(default)]
-    verbose: bool,
+    output: String,
+}
+
+impl Config {
+    fn output_level(&self) -> OutputLevel {
+        match self.output.to_lowercase().as_str() {
+            "verbose" | "v" => OutputLevel::Verbose,
+            "normal" | "n" => OutputLevel::Normal,
+            _ => OutputLevel::Minimal,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum OutputLevel {
+    Minimal,  // Single \r-overwriting lines
+    Normal,   // Multi-line status with clear start/end
+    Verbose,  // All details
 }
 
 fn default_remote_path() -> String {
@@ -141,9 +158,9 @@ struct Args {
     #[arg(long)]
     force_full_sync: bool,
 
-    /// Verbose output
+    /// Output level (minimal, normal, verbose). Overrides config file
     #[arg(short, long)]
-    verbose: bool,
+    output: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -162,13 +179,15 @@ fn main() -> Result<()> {
 
     // Load config
     let config_path = project_dir.join(&args.config);
-    let config: Config = load_config(&config_path)?;
+    let mut config: Config = load_config(&config_path)?;
 
-    // Merge verbose flag from CLI
-    let verbose = args.verbose || config.verbose;
+    // Override output level if specified on CLI
+    if let Some(output) = args.output {
+        config.output = output;
+    }
 
     // Run the remote build
-    run_remote_build(&project_dir, &config, verbose, args.force_full_sync)?;
+    run_remote_build(&project_dir, &config, args.force_full_sync)?;
 
     Ok(())
 }
@@ -181,29 +200,75 @@ fn load_config(path: &Path) -> Result<Config> {
         .map_err(|e| anyhow!("Failed to parse config file: {} - {}", path.display(), e))
 }
 
-fn run_remote_build(project_dir: &Path, config: &Config, verbose: bool, force_full_sync: bool) -> Result<()> {
-    println!("🚀 Remote Build Proxy");
-    println!("   Host: {}", config.host);
-    println!("   Project: {}", project_dir.display());
-    println!();
+fn run_remote_build(project_dir: &Path, config: &Config, force_full_sync: bool) -> Result<()> {
+    let output = config.output_level();
+
+    match output {
+        OutputLevel::Minimal => {
+            print!("🚀 Remote Build: {} ", config.host);
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+        }
+        OutputLevel::Normal | OutputLevel::Verbose => {
+            println!("🚀 Remote Build Proxy");
+            println!("   Host: {}", config.host);
+            println!("   Project: {}", project_dir.display());
+            println!();
+        }
+    }
 
     // Step 1: Sync files to remote
-    sync_to_remote(project_dir, config, verbose, force_full_sync)?;
+    sync_to_remote(project_dir, config, force_full_sync)?;
 
     // Step 2: Run build command on remote and stream output
-    run_remote_build_command(config, verbose)?;
+    run_remote_build_command(config)?;
 
     // Step 3: Copy artifacts back
-    sync_artifacts(config, verbose)?;
+    sync_artifacts(config)?;
 
-    println!();
-    println!("✅ Build complete!");
+    match output {
+        OutputLevel::Minimal => {
+            println!("\r✅ Build complete!");
+        }
+        OutputLevel::Normal | OutputLevel::Verbose => {
+            println!();
+            println!("✅ Build complete!");
+        }
+    }
 
     Ok(())
 }
 
-fn sync_to_remote(project_dir: &Path, config: &Config, verbose: bool, force_full_sync: bool) -> Result<()> {
-    println!("📦 Syncing files to remote...");
+/// Print a status message that can be overwritten with \r
+fn print_status(level: OutputLevel, message: &str) {
+    match level {
+        OutputLevel::Minimal => {
+            print!("\r{} ", message);
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+        }
+        OutputLevel::Normal => {
+            println!("{}", message);
+        }
+        OutputLevel::Verbose => {
+            println!("{}", message);
+        }
+    }
+}
+
+/// Clear the current status line (for minimal mode)
+fn clear_status(level: OutputLevel) {
+    if matches!(level, OutputLevel::Minimal) {
+        print!("\r{: <80}\r", ' ');
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+    }
+}
+
+fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) -> Result<()> {
+    let output = config.output_level();
+
+    print_status(output, "📦 Syncing files...");
 
     // Ensure SSH connection is established for reuse
     ensure_ssh_connection(config)?;
@@ -213,17 +278,16 @@ fn sync_to_remote(project_dir: &Path, config: &Config, verbose: bool, force_full
 
     // Create remote directory if it doesn't exist
     let mkdir_cmd = format!("mkdir -p {}", escape(Cow::Borrowed(remote_full_path.as_str())));
-    run_ssh_command(config, &mkdir_cmd, false)?;
+    run_ssh_command(config, &mkdir_cmd)?;
 
     // Build rsync command
     let mut rsync_cmd = Command::new("rsync");
     rsync_cmd.arg("-avz");
 
-    if verbose {
-        rsync_cmd.arg("-v");
-    } else {
-        rsync_cmd.arg("--quiet");
-    }
+    match output {
+        OutputLevel::Verbose => rsync_cmd.arg("-v"),
+        _ => rsync_cmd.arg("--quiet"),
+    };
 
     // Add delete flag to keep remote in sync
     rsync_cmd.arg("--delete");
@@ -286,8 +350,11 @@ fn sync_to_remote(project_dir: &Path, config: &Config, verbose: bool, force_full
         return Err(anyhow!("rsync failed with exit code: {:?}", status));
     }
 
-    println!("   ✓ Sync complete");
-    println!();
+    // In minimal mode, the status line stays, no additional output needed
+    if matches!(output, OutputLevel::Normal) {
+        println!("   ✓ Sync complete");
+        println!();
+    }
 
     Ok(())
 }
@@ -324,16 +391,21 @@ fn get_git_files(project_dir: &Path) -> Result<Vec<String>> {
     Ok(files)
 }
 
-fn run_remote_build_command(config: &Config, verbose: bool) -> Result<()> {
-    println!("🔨 Running build on remote...");
+fn run_remote_build_command(config: &Config) -> Result<()> {
+    let output = config.output_level();
+
+    clear_status(output);
+    print_status(output, "🔨 Building...");
 
     // Don't escape the cd path, just the build command if needed
     let cmd = format!("cd {} && {}", config.remote_path, config.build_command);
 
     // Run SSH command with output streaming
-    let status = if verbose {
+    let status = if matches!(output, OutputLevel::Verbose) {
         ssh_command(config).arg(&cmd).status()?
     } else {
+        // Clear the status line before showing build output
+        clear_status(output);
         ssh_command(config)
             .arg(&cmd)
             .stdout(std::process::Stdio::inherit())
@@ -345,25 +417,28 @@ fn run_remote_build_command(config: &Config, verbose: bool) -> Result<()> {
         return Err(anyhow!("Remote build command failed with exit code: {:?}", status));
     }
 
-    println!();
-    println!("   ✓ Build complete");
-    println!();
+    if matches!(output, OutputLevel::Normal) {
+        println!();
+        println!("   ✓ Build complete");
+        println!();
+    }
 
     Ok(())
 }
 
-fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
-    println!("📥 Copying artifacts back...");
+fn sync_artifacts(config: &Config) -> Result<()> {
+    let output = config.output_level();
+
+    print_status(output, "📥 Copying artifacts...");
 
     for artifact in &config.artifacts {
         let mut rsync_cmd = Command::new("rsync");
         rsync_cmd.arg("-avz");
 
-        if verbose {
-            rsync_cmd.arg("-v");
-        } else {
-            rsync_cmd.arg("--quiet");
-        }
+        match output {
+            OutputLevel::Verbose => rsync_cmd.arg("-v"),
+            _ => rsync_cmd.arg("--quiet"),
+        };
 
         // Use SSH control path for connection reuse
         rsync_cmd.arg("-e")
@@ -380,19 +455,21 @@ fn sync_artifacts(config: &Config, verbose: bool) -> Result<()> {
             // Non-fatal: just warn about missing artifacts
             eprintln!("   ⚠ Warning: Could not copy artifact: {}", artifact);
         } else {
-            if verbose {
+            if matches!(output, OutputLevel::Verbose) {
                 println!("   ✓ Copied: {}", artifact);
             }
         }
     }
 
-    println!("   ✓ Artifacts downloaded");
-    println!();
+    if matches!(output, OutputLevel::Normal) {
+        println!("   ✓ Artifacts downloaded");
+        println!();
+    }
 
     Ok(())
 }
 
-fn run_ssh_command(config: &Config, cmd: &str, _verbose: bool) -> Result<()> {
+fn run_ssh_command(config: &Config, cmd: &str) -> Result<()> {
     let output = ssh_command(config)
         .arg(cmd)
         .output()
