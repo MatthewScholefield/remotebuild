@@ -1,0 +1,20 @@
+[package]
+name = "remotebuild"
+version = "0.1.0"
+edition = "2021"
+description = "A remote build proxy tool for forwarding builds to a remote server via SSH"
+authors = ["Claude"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+shell-escape = "0.1"
+anyhow = "1.0"
+dirs = "5.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
