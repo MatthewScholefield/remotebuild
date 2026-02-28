@@ -65,7 +65,7 @@ jobs:
         shell: bash
 
       - name: Strip binary (Linux and macOS)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !matrix.use_cross
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
       - name: Upload artifact
