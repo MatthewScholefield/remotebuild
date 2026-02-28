@@ -74,6 +74,22 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
+      - name: Rename artifact for release
+        run: |
+          mkdir -p release-artifacts
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release-artifacts/${{ matrix.asset_name }}
+          else
+            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release-artifacts/${{ matrix.asset_name }}
+          fi
+        shell: bash
+
+      - name: Upload renamed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}-renamed
+          path: release-artifacts/${{ matrix.asset_name }}
+
   release:
     name: Create Release
     needs: build
@@ -87,15 +103,22 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          pattern: '*-renamed'
+          path: release-artifacts
 
       - name: Display structure of downloaded files
-        run: ls -R artifacts
+        run: ls -R release-artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find release-artifacts -type f -exec cp {} release/ \;
+          ls -la release
 
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*/*
+          files: release/*
           generate_release_notes: true
           draft: false
           prerelease: false
