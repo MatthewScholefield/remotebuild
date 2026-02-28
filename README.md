@@ -24,6 +24,13 @@ On the remote server:
 
 ## Installation
 
+### Pre-built binaries (Recommended)
+
+Download pre-built binaries from the [Releases](https://github.com/MatthewScholefield/remotebuild/releases) page. Available for:
+- Linux (x86_64 and ARM64)
+- macOS (Intel and Apple Silicon)
+- Windows (x86_64)
+
 ### From source
 
 ```bash
