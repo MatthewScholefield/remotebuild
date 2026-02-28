@@ -1,0 +1,71 @@
+# Rust formatter configuration for remotebuild
+
+# Edition to use (overrides edition in Cargo.toml if needed)
+edition = "2021"
+
+# Maximum line width (default is 100)
+max_width = 100
+
+# Use fields for small structs (default is false)
+use_small_heuristics = "Default"
+
+# Hard tabs or spaces
+hard_tabs = false
+tab_spaces = 4
+
+# Newline style (Unix or Windows)
+newline_style = "Unix"
+
+# Use try shorthand (default is true)
+use_try_shorthand = true
+
+# Use field init shorthand (default is true)
+use_field_init_shorthand = true
+
+# Force explicit types for public items (good for API clarity)
+# force_explicit_abi = true
+
+# Format code in doc comments (default is true)
+format_code_in_doc_comments = true
+
+# Format strings (default is true)
+format_strings = true
+
+# Normalize comments (default is true)
+normalize_comments = true
+
+# Normalize doc attributes (default is true)
+normalize_doc_attributes = true
+
+# Reorder imports (default is true)
+reorder_imports = true
+
+# Reorder modules (default is true)
+reorder_modules = true
+
+# Space after colon (default is true)
+space_after_colon = true
+
+# Space before colon (default is false)
+space_before_colon = false
+
+# Trailing comma (default is true for functions/arrays)
+trailing_comma = "Vertical"
+
+# trailing semicolon (default is true)
+trailing_semicolon = true
+
+# Type punctuation density (default is Wide)
+type_punctuation_density = "Wide"
+
+# Wrap comments at max_width (default is false)
+wrap_comments = false
+
+# Match block trailing comma (default is false)
+match_block_trailing_comma = false
+
+# Remove nested parens (default is true)
+remove_nested_parens = true
+
+# Use test pull (default is true) - unify use statements
+use_test_wildcard = false

@@ -1,0 +1,43 @@
+# Example configuration file for remotebuild
+# Copy this file to .remotebuild.yaml and customize for your project
+
+# SSH host to connect to
+# Can be user@hostname or just hostname if using SSH config
+host: user@hostname
+
+# Full path on remote server where project will be synced
+# Will be created if it doesn't exist
+remote_path: ~/remotebuild-cache/myproject
+
+# Build command to run on remote server
+# This can be any command that works on the remote server
+# Examples:
+#   - "make"
+#   - "cargo build --release"
+#   - "./build.sh"
+#   - "cmake --build build"
+build_command: make
+
+# Artifacts to copy back from remote to local
+# Paths are relative to the remote_path directory
+artifacts:
+  - "build/output.bin"
+  - "build/output.elf"
+
+# Optional: Additional patterns to exclude from sync
+# These are added to the default exclusions (.git, .gitignore, build/, etc.)
+exclude_patterns:
+  - "*.log"
+  - "temp/"
+  - "*.tmp"
+
+# Optional: Enable git-aware file syncing (default: true)
+# When true, only syncs files tracked by git plus untracked files not in .gitignore
+# This makes incremental builds much faster
+git_aware: true
+
+# Optional: Output level (default: minimal)
+# - minimal: Single-line status with spinner (cleanest for automation)
+# - normal: Multi-line status with completion messages
+# - verbose: Shows detailed file transfer and build logs
+output: minimal

@@ -3,7 +3,14 @@ name = "remotebuild"
 version = "0.1.0"
 edition = "2021"
 description = "A remote build proxy tool for forwarding builds to a remote server via SSH"
-authors = ["Claude"]
+authors = ["Matthew Scholefield <matthew331199@gmail.com>"]
+repository = "https://github.com/MatthewScholefield/remotebuild"
+homepage = "https://github.com/MatthewScholefield/remotebuild"
+readme = "README.md"
+license = "MIT"
+keywords = ["ssh", "remote", "build", "development", "proxy"]
+categories = ["development-tools", "command-line-utilities"]
+rust-version = "1.70"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -18,3 +25,26 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[lints.rust]
+# Safe lints that provide additional checks
+dead_code = "warn"
+unused_imports = "warn"
+unused_variables = "warn"
+unused_extern_crates = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_assignments = "warn"
+
+[lints.clippy]
+# Enable additional Clippy lints
+#cargo_common_metadata = "warn"  # Will be enabled after repo is set up
+missing_docs_in_private_items = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+unimplemented = "warn"
+todo = "warn"
+unreachable = "warn"

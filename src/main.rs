@@ -3,13 +3,10 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use shell_escape::escape;
 use std::borrow::Cow;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::env;
-use std::fmt;
-use std::thread;
-use std::time::Duration;
 
 /// Remote build configuration file
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,6 +38,7 @@ struct Config {
 }
 
 impl Config {
+    /// Parse the output level from the configuration string
     fn output_level(&self) -> OutputLevel {
         match self.output.to_lowercase().as_str() {
             "verbose" | "v" => OutputLevel::Verbose,
@@ -50,22 +48,31 @@ impl Config {
     }
 }
 
+/// Output verbosity level for the CLI
 #[derive(Clone, Copy)]
 enum OutputLevel {
-    Minimal,  // Single \r-overwriting lines with spinner
-    Normal,   // Multi-line status with clear start/end
-    Verbose,  // All details
+    /// Single \r-overwriting lines with spinner
+    Minimal,
+    /// Multi-line status with clear start/end
+    Normal,
+    /// All details including file transfer logs
+    Verbose,
 }
 
 /// Simple spinner for minimal mode
 struct Spinner {
+    /// The message to display
     message: String,
+    /// Animation frames
     frames: &'static [&'static str],
+    /// Current animation frame
     current_frame: usize,
+    /// Whether the spinner has been stopped
     stopped: bool,
 }
 
 impl Spinner {
+    /// Create a new spinner with the given message
     fn new(message: &str) -> Self {
         Self {
             message: message.to_string(),
@@ -75,6 +82,7 @@ impl Spinner {
         }
     }
 
+    /// Advance the spinner by one frame
     fn tick(&mut self) {
         if self.stopped {
             return;
@@ -89,6 +97,7 @@ impl Spinner {
         self.current_frame += 1;
     }
 
+    /// Stop the spinner and clear the line
     fn stop(&mut self) {
         if self.stopped {
             return;
@@ -109,10 +118,12 @@ impl Drop for Spinner {
     }
 }
 
+/// Default value for the remote_path configuration field
 fn default_remote_path() -> String {
     "~/remotebuild-cache".to_string()
 }
 
+/// Default value for boolean fields that should default to true
 fn default_true() -> bool {
     true
 }
@@ -120,13 +131,16 @@ fn default_true() -> bool {
 /// Get the SSH control socket path for connection sharing
 fn ssh_control_path(host: &str) -> String {
     // Use XDG cache directory or fallback to temp
-    let cache_dir = dirs::cache_dir().unwrap_or_else(|| env::temp_dir());
+    let cache_dir = dirs::cache_dir().unwrap_or_else(env::temp_dir);
     let control_dir = cache_dir.join("remotebuild");
     let _ = fs::create_dir_all(&control_dir);
 
     // Sanitize hostname for use in filename
     let safe_host = host.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '.', "_");
-    control_dir.join(format!("control_{}", safe_host)).to_string_lossy().to_string()
+    control_dir
+        .join(format!("control_{}", safe_host))
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Ensure SSH control master connection is established
@@ -178,8 +192,7 @@ fn ensure_ssh_connection(config: &Config) -> Result<()> {
 /// Helper to add SSH control options to a command
 fn add_ssh_control_args(cmd: &mut Command, config: &Config) {
     let control_path = ssh_control_path(&config.host);
-    cmd.arg("-o")
-        .arg(format!("ControlPath={}", control_path));
+    cmd.arg("-o").arg(format!("ControlPath={}", control_path));
 }
 
 /// Create a Command with SSH control path pre-configured
@@ -228,7 +241,10 @@ fn main() -> Result<()> {
     };
 
     if !project_dir.is_dir() {
-        return Err(anyhow!("Project path is not a directory: {}", project_dir.display()));
+        return Err(anyhow!(
+            "Project path is not a directory: {}",
+            project_dir.display()
+        ));
     }
 
     // Load config
@@ -246,6 +262,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Load and parse the configuration file from the given path
 fn load_config(path: &Path) -> Result<Config> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read config file: {}", path.display()))?;
@@ -254,6 +271,7 @@ fn load_config(path: &Path) -> Result<Config> {
         .map_err(|e| anyhow!("Failed to parse config file: {} - {}", path.display(), e))
 }
 
+/// Main entry point for running a remote build
 fn run_remote_build(project_dir: &Path, config: &Config, force_full_sync: bool) -> Result<()> {
     let output = config.output_level();
 
@@ -317,14 +335,7 @@ fn clear_status(_level: OutputLevel, spinner: &mut Option<Spinner>) {
     }
 }
 
-/// Tick the spinner to show next frame
-fn tick_spinner(spinner: &mut Option<Spinner>) {
-    if let Some(spinner) = spinner {
-        spinner.tick();
-        thread::sleep(Duration::from_millis(150));
-    }
-}
-
+/// Sync project files to the remote server using rsync
 fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) -> Result<()> {
     let output = config.output_level();
 
@@ -337,7 +348,10 @@ fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) ->
     let remote_full_path = &config.remote_path;
 
     // Create remote directory if it doesn't exist
-    let mkdir_cmd = format!("mkdir -p {}", escape(Cow::Borrowed(remote_full_path.as_str())));
+    let mkdir_cmd = format!(
+        "mkdir -p {}",
+        escape(Cow::Borrowed(remote_full_path.as_str()))
+    );
     run_ssh_command(config, &mkdir_cmd)?;
 
     // Build rsync command
@@ -353,8 +367,7 @@ fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) ->
     rsync_cmd.arg("--delete");
 
     // Add SSH control path for connection reuse
-    rsync_cmd.arg("-e")
-        .arg(ssh_control_path_arg(config));
+    rsync_cmd.arg("-e").arg(ssh_control_path_arg(config));
 
     // Add exclusions
     rsync_cmd.arg("--exclude=.git");
@@ -375,7 +388,7 @@ fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) ->
             if !tracked_files.is_empty() {
                 // Use --files-from to sync only tracked files
                 // We need to write the list to a temp file
-                let temp_dir = dirs::cache_dir().unwrap_or_else(|| env::temp_dir());
+                let temp_dir = dirs::cache_dir().unwrap_or_else(env::temp_dir);
                 let temp_file = temp_dir.join(format!("remotebuild_{}", std::process::id()));
 
                 fs::write(&temp_file, tracked_files.join("\n"))?;
@@ -398,7 +411,8 @@ fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) ->
     rsync_cmd.arg(format!("{}:{}/", config.host, remote_full_path));
 
     // Run rsync
-    let status = rsync_cmd.status()
+    let status = rsync_cmd
+        .status()
         .context("Failed to run rsync. Make sure rsync is installed.")?;
 
     // Clean up temp file if we created one
@@ -421,6 +435,7 @@ fn sync_to_remote(project_dir: &Path, config: &Config, force_full_sync: bool) ->
     Ok(())
 }
 
+/// Get the list of files tracked by git in the project directory
 fn get_git_files(project_dir: &Path) -> Result<Vec<String>> {
     let output = Command::new("git")
         .args(["ls-files"])
@@ -453,6 +468,7 @@ fn get_git_files(project_dir: &Path) -> Result<Vec<String>> {
     Ok(files)
 }
 
+/// Execute the build command on the remote server via SSH
 fn run_remote_build_command(config: &Config) -> Result<()> {
     let output = config.output_level();
 
@@ -476,7 +492,10 @@ fn run_remote_build_command(config: &Config) -> Result<()> {
     };
 
     if !status.success() {
-        return Err(anyhow!("Remote build command failed with exit code: {:?}", status));
+        return Err(anyhow!(
+            "Remote build command failed with exit code: {:?}",
+            status
+        ));
     }
 
     if matches!(output, OutputLevel::Normal) {
@@ -488,6 +507,7 @@ fn run_remote_build_command(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Copy build artifacts from the remote server back to the local machine
 fn sync_artifacts(config: &Config) -> Result<()> {
     let output = config.output_level();
 
@@ -503,23 +523,24 @@ fn sync_artifacts(config: &Config) -> Result<()> {
         };
 
         // Use SSH control path for connection reuse
-        rsync_cmd.arg("-e")
-            .arg(ssh_control_path_arg(config));
+        rsync_cmd.arg("-e").arg(ssh_control_path_arg(config));
 
         // Copy from remote to current directory
-        rsync_cmd.arg(format!("{}:{}/{}", config.host, config.remote_path, artifact));
+        rsync_cmd.arg(format!(
+            "{}:{}/{}",
+            config.host, config.remote_path, artifact
+        ));
         rsync_cmd.arg("."); // Copy to current directory
 
-        let status = rsync_cmd.status()
+        let status = rsync_cmd
+            .status()
             .context("Failed to run rsync for artifacts")?;
 
         if !status.success() {
             // Non-fatal: just warn about missing artifacts
             eprintln!("   ⚠ Warning: Could not copy artifact: {}", artifact);
-        } else {
-            if matches!(output, OutputLevel::Verbose) {
-                println!("   ✓ Copied: {}", artifact);
-            }
+        } else if matches!(output, OutputLevel::Verbose) {
+            println!("   ✓ Copied: {}", artifact);
         }
     }
 
@@ -533,6 +554,7 @@ fn sync_artifacts(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Run a command on the remote server via SSH and return the output
 fn run_ssh_command(config: &Config, cmd: &str) -> Result<()> {
     let output = ssh_command(config)
         .arg(cmd)
